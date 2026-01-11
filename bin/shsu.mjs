@@ -1,18 +1,37 @@
 #!/usr/bin/env node
 
 import { spawn, execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 
 // ─────────────────────────────────────────────────────────────
-// Configuration (via environment variables)
+// Configuration (package.json + environment variables)
 // ─────────────────────────────────────────────────────────────
-const config = {
-  server: process.env.SHSU_SERVER,
-  remotePath: process.env.SHSU_REMOTE_PATH,
-  localPath: process.env.SHSU_LOCAL_PATH || './supabase/functions',
-  url: process.env.SHSU_URL,
-};
+function loadConfig() {
+  let pkgConfig = {};
+
+  // Try to load from package.json
+  const pkgPath = join(process.cwd(), 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      pkgConfig = pkg.shsu || {};
+    } catch (e) {
+      // Ignore parse errors
+    }
+  }
+
+  // Env vars override package.json
+  return {
+    server: process.env.SHSU_SERVER || pkgConfig.server,
+    remotePath: process.env.SHSU_REMOTE_PATH || pkgConfig.remotePath,
+    localPath: process.env.SHSU_LOCAL_PATH || pkgConfig.localPath || './supabase/functions',
+    url: process.env.SHSU_URL || pkgConfig.url,
+  };
+}
+
+const config = loadConfig();
 
 // ─────────────────────────────────────────────────────────────
 // Colors
@@ -218,29 +237,311 @@ async function cmdNew(funcName) {
 
 function cmdEnv() {
   console.log(`
-${c.yellow('Required environment variables:')}
+${c.yellow('Configuration (package.json "shsu" key or environment variables):')}
 
-  SHSU_SERVER        SSH host for your Coolify server
-  SHSU_REMOTE_PATH   Remote path to functions directory
-  SHSU_URL           Supabase URL (for invoke command)
+  server        SSH host for your Coolify server
+  remotePath    Remote path to functions directory
+  url           Supabase URL (for invoke command)
+  localPath     Local functions path (default: ./supabase/functions)
 
-${c.yellow('Optional:')}
+${c.yellow('Environment variables override package.json:')}
 
-  SHSU_LOCAL_PATH    Local functions path (default: ./supabase/functions)
-
-${c.yellow('Example .env or shell config:')}
-
-  export SHSU_SERVER="user@your-server.com"
-  export SHSU_REMOTE_PATH="/data/coolify/services/abc123/volumes/functions"
-  export SHSU_URL="https://your-supabase.example.com"
+  SHSU_SERVER, SHSU_REMOTE_PATH, SHSU_URL, SHSU_LOCAL_PATH
 
 ${c.yellow('Current values:')}
 
-  SHSU_SERVER       = ${config.server || c.dim('(not set)')}
-  SHSU_REMOTE_PATH  = ${config.remotePath || c.dim('(not set)')}
-  SHSU_URL          = ${config.url || c.dim('(not set)')}
-  SHSU_LOCAL_PATH   = ${config.localPath}
+  server       = ${config.server || c.dim('(not set)')}
+  remotePath   = ${config.remotePath || c.dim('(not set)')}
+  url          = ${config.url || c.dim('(not set)')}
+  localPath    = ${config.localPath}
+
+${c.dim('Run "shsu init" to configure via prompts.')}
 `);
+}
+
+async function cmdInit() {
+  const pkgPath = join(process.cwd(), 'package.json');
+
+  if (!existsSync(pkgPath)) {
+    error('No package.json found. Run "npm init" first.');
+  }
+
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  const ask = (question, defaultVal) =>
+    new Promise((resolve) => {
+      const prompt = defaultVal ? `${question} [${defaultVal}]: ` : `${question}: `;
+      rl.question(prompt, (answer) => {
+        resolve(answer.trim() || defaultVal || '');
+      });
+    });
+
+  console.log(`\n${c.blue('shsu init')} - Configure project\n`);
+
+  const server = await ask('Server (e.g. root@server.com)', config.server);
+  const remotePath = await ask('Remote path to functions', config.remotePath);
+  const url = await ask('Supabase URL', config.url);
+  const localPath = await ask('Local functions path', config.localPath || './supabase/functions');
+
+  rl.close();
+
+  // Read and update package.json
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+  pkg.shsu = {
+    server: server || undefined,
+    remotePath: remotePath || undefined,
+    url: url || undefined,
+    localPath: localPath !== './supabase/functions' ? localPath : undefined,
+  };
+
+  // Remove undefined values
+  Object.keys(pkg.shsu).forEach((key) => {
+    if (pkg.shsu[key] === undefined) delete pkg.shsu[key];
+  });
+
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+
+  console.log('');
+  success('Added shsu config to package.json');
+}
+
+// ─────────────────────────────────────────────────────────────
+// MCP Server
+// ─────────────────────────────────────────────────────────────
+async function cmdMcp() {
+  const tools = [
+    {
+      name: 'deploy',
+      description: 'Deploy edge function(s) to the server. Syncs via rsync and restarts edge-runtime.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Function name to deploy. If omitted, deploys all functions.' },
+          noRestart: { type: 'boolean', description: 'Skip restarting edge-runtime after deploy.' },
+        },
+      },
+    },
+    {
+      name: 'list',
+      description: 'List edge functions (both local and remote).',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'invoke',
+      description: 'Invoke an edge function with optional JSON data.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Function name to invoke.' },
+          data: { type: 'string', description: 'JSON data to send (default: {}).' },
+        },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'restart',
+      description: 'Restart the edge-runtime container.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'new',
+      description: 'Create a new edge function from template.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name for the new function.' },
+        },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'config',
+      description: 'Get current shsu configuration.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+  ];
+
+  const serverInfo = {
+    name: 'shsu',
+    version: '0.0.1',
+  };
+
+  // Helper to write JSON-RPC response
+  const respond = (id, result) => {
+    const response = { jsonrpc: '2.0', id, result };
+    process.stdout.write(JSON.stringify(response) + '\n');
+  };
+
+  const respondError = (id, code, message) => {
+    const response = { jsonrpc: '2.0', id, error: { code, message } };
+    process.stdout.write(JSON.stringify(response) + '\n');
+  };
+
+  // Capture output helper
+  const captureExec = (cmd) => {
+    try {
+      return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    } catch (e) {
+      return e.message;
+    }
+  };
+
+  // Tool handlers
+  const handleTool = async (name, args = {}) => {
+    switch (name) {
+      case 'deploy': {
+        if (!config.server || !config.remotePath) {
+          return { content: [{ type: 'text', text: 'Error: server and remotePath must be configured. Run "shsu init" first.' }] };
+        }
+        const funcName = args.name;
+        const noRestart = args.noRestart || false;
+        let output = '';
+
+        if (!funcName) {
+          output = captureExec(`rsync -avz --delete --exclude='*.test.ts' --exclude='*.spec.ts' "${config.localPath}/" "${config.server}:${config.remotePath}/"`);
+        } else {
+          const funcPath = join(config.localPath, funcName);
+          if (!existsSync(funcPath)) {
+            return { content: [{ type: 'text', text: `Error: Function not found: ${funcPath}` }] };
+          }
+          output = captureExec(`rsync -avz "${funcPath}/" "${config.server}:${config.remotePath}/${funcName}/"`);
+        }
+
+        if (!noRestart) {
+          output += '\n' + captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=edge')"`);
+        }
+
+        return { content: [{ type: 'text', text: `Deployed${funcName ? ` ${funcName}` : ' all functions'}${noRestart ? ' (no restart)' : ''}\n\n${output}` }] };
+      }
+
+      case 'list': {
+        if (!config.server || !config.remotePath) {
+          return { content: [{ type: 'text', text: 'Error: server and remotePath must be configured.' }] };
+        }
+        const remote = captureExec(`ssh ${config.server} "ls -1 ${config.remotePath} 2>/dev/null"`) || '(none)';
+        let local = '(none)';
+        if (existsSync(config.localPath)) {
+          const dirs = readdirSync(config.localPath, { withFileTypes: true })
+            .filter((d) => d.isDirectory())
+            .map((d) => d.name);
+          local = dirs.length ? dirs.join('\n') : '(none)';
+        }
+        return { content: [{ type: 'text', text: `Remote functions:\n${remote}\n\nLocal functions:\n${local}` }] };
+      }
+
+      case 'invoke': {
+        if (!config.url) {
+          return { content: [{ type: 'text', text: 'Error: url must be configured for invoke.' }] };
+        }
+        if (!args.name) {
+          return { content: [{ type: 'text', text: 'Error: function name is required.' }] };
+        }
+        const data = args.data || '{}';
+        const output = captureExec(`curl -s -X POST "${config.url}/functions/v1/${args.name}" -H "Content-Type: application/json" -d '${data}'`);
+        return { content: [{ type: 'text', text: output }] };
+      }
+
+      case 'restart': {
+        if (!config.server) {
+          return { content: [{ type: 'text', text: 'Error: server must be configured.' }] };
+        }
+        const output = captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=edge')"`);
+        return { content: [{ type: 'text', text: `Restarted edge-runtime\n\n${output}` }] };
+      }
+
+      case 'new': {
+        if (!args.name) {
+          return { content: [{ type: 'text', text: 'Error: function name is required.' }] };
+        }
+        const funcPath = join(config.localPath, args.name);
+        if (existsSync(funcPath)) {
+          return { content: [{ type: 'text', text: `Error: Function already exists: ${args.name}` }] };
+        }
+        mkdirSync(funcPath, { recursive: true });
+        writeFileSync(
+          join(funcPath, 'index.ts'),
+          `Deno.serve(async (req) => {
+  try {
+    const { name } = await req.json()
+
+    return new Response(
+      JSON.stringify({ message: \`Hello \${name}!\` }),
+      { headers: { "Content-Type": "application/json" } }
+    )
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    )
+  }
+})
+`
+        );
+        return { content: [{ type: 'text', text: `Created ${funcPath}/index.ts` }] };
+      }
+
+      case 'config': {
+        return {
+          content: [{
+            type: 'text',
+            text: `Current configuration:\n  server: ${config.server || '(not set)'}\n  remotePath: ${config.remotePath || '(not set)'}\n  url: ${config.url || '(not set)'}\n  localPath: ${config.localPath}`,
+          }],
+        };
+      }
+
+      default:
+        return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+    }
+  };
+
+  // Process incoming messages
+  const rl = createInterface({ input: process.stdin });
+
+  for await (const line of rl) {
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    const { id, method, params } = msg;
+
+    switch (method) {
+      case 'initialize':
+        respond(id, {
+          protocolVersion: '2024-11-05',
+          capabilities: { tools: {} },
+          serverInfo,
+        });
+        break;
+
+      case 'notifications/initialized':
+        // No response needed for notifications
+        break;
+
+      case 'tools/list':
+        respond(id, { tools });
+        break;
+
+      case 'tools/call':
+        try {
+          const result = await handleTool(params.name, params.arguments || {});
+          respond(id, result);
+        } catch (e) {
+          respond(id, { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true });
+        }
+        break;
+
+      default:
+        if (id !== undefined) {
+          respondError(id, -32601, `Method not found: ${method}`);
+        }
+    }
+  }
 }
 
 function cmdHelp() {
@@ -251,6 +552,8 @@ ${c.yellow('Usage:')}
   shsu <command> [options]
 
 ${c.yellow('Commands:')}
+  init                 Configure shsu for this project
+
   deploy [name]        Deploy function(s) to server
                        - No args: deploy all functions
                        - With name: deploy single function
@@ -261,25 +564,26 @@ ${c.yellow('Commands:')}
 
   list                 List functions (local and remote)
 
-  invoke <n> [json]   Invoke a function
+  invoke <n> [json]    Invoke a function
 
   restart              Restart edge-runtime container
 
   new <name>           Create new function from template
 
-  env                  Show required environment variables
+  env                  Show current configuration
+
+  mcp                  Start MCP server (for AI assistants)
 
 ${c.yellow('Examples:')}
+  shsu init
   shsu deploy
-  shsu deploy hello-world
   shsu deploy hello-world --no-restart
-  shsu logs
   shsu logs hello-world
   shsu invoke hello-world '{"name":"Stefan"}'
   shsu new my-function
 
 ${c.yellow('Setup:')}
-  Run 'shsu env' to see required environment variables.
+  Run 'shsu init' to configure, or set values in package.json "shsu" key.
 `);
 }
 
@@ -316,6 +620,12 @@ async function main() {
       case 'new':
       case 'create':
         await cmdNew(args[1]);
+        break;
+      case 'init':
+        await cmdInit();
+        break;
+      case 'mcp':
+        await cmdMcp();
         break;
       case 'env':
       case 'config':
