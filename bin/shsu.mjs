@@ -27,7 +27,10 @@ function loadConfig() {
     server: process.env.SHSU_SERVER || pkgConfig.server,
     remotePath: process.env.SHSU_REMOTE_PATH || pkgConfig.remotePath,
     localPath: process.env.SHSU_LOCAL_PATH || pkgConfig.localPath || './supabase/functions',
+    migrationsPath: process.env.SHSU_MIGRATIONS_PATH || pkgConfig.migrationsPath || './supabase/migrations',
     url: process.env.SHSU_URL || pkgConfig.url,
+    edgeContainer: process.env.SHSU_EDGE_CONTAINER || pkgConfig.edgeContainer || 'edge',
+    dbContainer: process.env.SHSU_DB_CONTAINER || pkgConfig.dbContainer || 'postgres',
   };
 }
 
@@ -85,7 +88,7 @@ function runSync(cmd) {
 }
 
 function getEdgeContainer() {
-  return runSync(`ssh ${config.server} "docker ps -q --filter 'name=edge'"`);
+  return runSync(`ssh ${config.server} "docker ps -q --filter 'name=${config.edgeContainer}'"`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -121,7 +124,7 @@ async function cmdDeploy(funcName, noRestart = false) {
     info('Restarting edge-runtime...');
     await run('ssh', [
       config.server,
-      `docker restart $(docker ps -q --filter 'name=edge')`,
+      `docker restart $(docker ps -q --filter 'name=${config.edgeContainer}')`,
     ], { stdio: ['inherit', 'pipe', 'inherit'] });
     success(`Deployed${funcName ? ` ${funcName}` : ''}`);
   } else {
@@ -136,7 +139,7 @@ async function cmdLogs(filter, lines = 100) {
 
   const sshArgs = [
     config.server,
-    `docker logs -f $(docker ps -q --filter 'name=edge') --tail ${lines} 2>&1`,
+    `docker logs -f $(docker ps -q --filter 'name=${config.edgeContainer}') --tail ${lines} 2>&1`,
   ];
 
   if (filter) {
@@ -196,9 +199,60 @@ async function cmdRestart() {
   info('Restarting edge-runtime...');
   await run('ssh', [
     config.server,
-    `docker restart $(docker ps -q --filter 'name=edge')`,
+    `docker restart $(docker ps -q --filter 'name=${config.edgeContainer}')`,
   ], { stdio: ['inherit', 'pipe', 'inherit'] });
   success('Restarted');
+}
+
+async function cmdMigrate() {
+  requireServer();
+
+  if (!existsSync(config.migrationsPath)) {
+    error(`Migrations folder not found: ${config.migrationsPath}`);
+  }
+
+  // Get list of migration files
+  const migrations = readdirSync(config.migrationsPath)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  if (migrations.length === 0) {
+    info('No migration files found.');
+    return;
+  }
+
+  info(`Found ${migrations.length} migration(s): ${migrations.join(', ')}`);
+
+  // Copy migrations to server
+  const remoteMigrationsPath = '/tmp/shsu-migrations';
+  info('Syncing migrations to server...');
+  await run('rsync', [
+    '-avz', '--delete',
+    `${config.migrationsPath}/`,
+    `${config.server}:${remoteMigrationsPath}/`,
+  ]);
+
+  // Find the database container
+  const dbContainer = runSync(`ssh ${config.server} "docker ps -q --filter 'name=${config.dbContainer}'"`);
+  if (!dbContainer) {
+    error(`Database container not found (filter: ${config.dbContainer})`);
+  }
+
+  // Run each migration
+  for (const migration of migrations) {
+    info(`Running ${migration}...`);
+    try {
+      await run('ssh', [
+        config.server,
+        `docker exec -i ${dbContainer} psql -U postgres -d postgres -f /tmp/shsu-migrations/${migration}`,
+      ]);
+      success(`Applied ${migration}`);
+    } catch (e) {
+      error(`Failed to apply ${migration}: ${e.message}`);
+    }
+  }
+
+  success('All migrations applied');
 }
 
 async function cmdNew(funcName) {
@@ -239,23 +293,26 @@ function cmdEnv() {
   console.log(`
 ${c.yellow('Configuration (package.json "shsu" key or environment variables):')}
 
-  server        SSH host for your Coolify server
-  remotePath    Remote path to functions directory
-  url           Supabase URL (for invoke command)
-  localPath     Local functions path (default: ./supabase/functions)
-
-${c.yellow('Environment variables override package.json:')}
-
-  SHSU_SERVER, SHSU_REMOTE_PATH, SHSU_URL, SHSU_LOCAL_PATH
+  server          SSH host for your Coolify server
+  remotePath      Remote path to functions directory
+  url             Supabase URL (for invoke command)
+  localPath       Local functions path (default: ./supabase/functions)
+  migrationsPath  Local migrations path (default: ./supabase/migrations)
+  edgeContainer   Edge runtime container filter (default: edge)
+  dbContainer     Database container filter (default: postgres)
 
 ${c.yellow('Current values:')}
 
-  server       = ${config.server || c.dim('(not set)')}
-  remotePath   = ${config.remotePath || c.dim('(not set)')}
-  url          = ${config.url || c.dim('(not set)')}
-  localPath    = ${config.localPath}
+  server          = ${config.server || c.dim('(not set)')}
+  remotePath      = ${config.remotePath || c.dim('(not set)')}
+  url             = ${config.url || c.dim('(not set)')}
+  localPath       = ${config.localPath}
+  migrationsPath  = ${config.migrationsPath}
+  edgeContainer   = ${config.edgeContainer}
+  dbContainer     = ${config.dbContainer}
 
 ${c.dim('Run "shsu init" to configure via prompts.')}
+${c.dim('Find container names in Coolify: Services → Your Service → look for container name prefix')}
 `);
 }
 
@@ -285,6 +342,8 @@ async function cmdInit() {
   const remotePath = await ask('Remote path to functions', config.remotePath);
   const url = await ask('Supabase URL', config.url);
   const localPath = await ask('Local functions path', config.localPath || './supabase/functions');
+  const edgeContainer = await ask('Edge container name filter', config.edgeContainer || 'edge');
+  const dbContainer = await ask('Database container name filter', config.dbContainer || 'postgres');
 
   rl.close();
 
@@ -295,6 +354,8 @@ async function cmdInit() {
     remotePath: remotePath || undefined,
     url: url || undefined,
     localPath: localPath !== './supabase/functions' ? localPath : undefined,
+    edgeContainer: edgeContainer !== 'edge' ? edgeContainer : undefined,
+    dbContainer: dbContainer !== 'postgres' ? dbContainer : undefined,
   };
 
   // Remove undefined values
@@ -362,6 +423,11 @@ async function cmdMcp() {
       description: 'Get current shsu configuration.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'migrate',
+      description: 'Run SQL migrations on the database. Syncs migration files via rsync and executes them via psql.',
+      inputSchema: { type: 'object', properties: {} },
+    },
   ];
 
   const serverInfo = {
@@ -411,7 +477,7 @@ async function cmdMcp() {
         }
 
         if (!noRestart) {
-          output += '\n' + captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=edge')"`);
+          output += '\n' + captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=${config.edgeContainer}')"`);
         }
 
         return { content: [{ type: 'text', text: `Deployed${funcName ? ` ${funcName}` : ' all functions'}${noRestart ? ' (no restart)' : ''}\n\n${output}` }] };
@@ -448,7 +514,7 @@ async function cmdMcp() {
         if (!config.server) {
           return { content: [{ type: 'text', text: 'Error: server must be configured.' }] };
         }
-        const output = captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=edge')"`);
+        const output = captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=${config.edgeContainer}')"`);
         return { content: [{ type: 'text', text: `Restarted edge-runtime\n\n${output}` }] };
       }
 
@@ -487,9 +553,39 @@ async function cmdMcp() {
         return {
           content: [{
             type: 'text',
-            text: `Current configuration:\n  server: ${config.server || '(not set)'}\n  remotePath: ${config.remotePath || '(not set)'}\n  url: ${config.url || '(not set)'}\n  localPath: ${config.localPath}`,
+            text: `Current configuration:\n  server: ${config.server || '(not set)'}\n  remotePath: ${config.remotePath || '(not set)'}\n  url: ${config.url || '(not set)'}\n  localPath: ${config.localPath}\n  migrationsPath: ${config.migrationsPath}\n  edgeContainer: ${config.edgeContainer}\n  dbContainer: ${config.dbContainer}`,
           }],
         };
+      }
+
+      case 'migrate': {
+        if (!config.server) {
+          return { content: [{ type: 'text', text: 'Error: server must be configured.' }] };
+        }
+        if (!existsSync(config.migrationsPath)) {
+          return { content: [{ type: 'text', text: `Error: Migrations folder not found: ${config.migrationsPath}` }] };
+        }
+        const migrations = readdirSync(config.migrationsPath)
+          .filter((f) => f.endsWith('.sql'))
+          .sort();
+        if (migrations.length === 0) {
+          return { content: [{ type: 'text', text: 'No migration files found.' }] };
+        }
+        let output = `Found ${migrations.length} migration(s): ${migrations.join(', ')}\n\n`;
+        // Sync migrations
+        output += captureExec(`rsync -avz --delete "${config.migrationsPath}/" "${config.server}:/tmp/shsu-migrations/"`) + '\n';
+        // Find db container
+        const dbContainer = captureExec(`ssh ${config.server} "docker ps -q --filter 'name=${config.dbContainer}'"`);
+        if (!dbContainer) {
+          return { content: [{ type: 'text', text: `Error: Database container not found (filter: ${config.dbContainer})` }] };
+        }
+        // Run migrations
+        for (const migration of migrations) {
+          output += `\nRunning ${migration}...\n`;
+          output += captureExec(`ssh ${config.server} "docker exec -i ${dbContainer} psql -U postgres -d postgres -f /tmp/shsu-migrations/${migration}"`) + '\n';
+        }
+        output += '\nAll migrations applied.';
+        return { content: [{ type: 'text', text: output }] };
       }
 
       default:
@@ -559,6 +655,8 @@ ${c.yellow('Commands:')}
                        - With name: deploy single function
                        Options: --no-restart
 
+  migrate              Run SQL migrations on database
+
   logs [filter]        Stream edge-runtime logs
                        - Optional filter string
 
@@ -578,6 +676,7 @@ ${c.yellow('Examples:')}
   shsu init
   shsu deploy
   shsu deploy hello-world --no-restart
+  shsu migrate
   shsu logs hello-world
   shsu invoke hello-world '{"name":"Stefan"}'
   shsu new my-function
@@ -616,6 +715,11 @@ async function main() {
         break;
       case 'restart':
         await cmdRestart();
+        break;
+      case 'migrate':
+      case 'migration':
+      case 'migrations':
+        await cmdMigrate();
         break;
       case 'new':
       case 'create':

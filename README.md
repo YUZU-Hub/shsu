@@ -2,7 +2,7 @@
 
 **S**elf-**H**osted **S**upabase **U**tilities
 
-Deploy and manage Supabase Edge Functions on Coolify-hosted Supabase.
+Deploy and manage Supabase Edge Functions and migrations on Coolify-hosted Supabase.
 
 ## Install
 
@@ -27,16 +27,21 @@ This adds config to your `package.json`:
   "shsu": {
     "server": "root@your-coolify-server",
     "remotePath": "/data/coolify/services/YOUR_SERVICE_ID/volumes/functions",
-    "url": "https://your-supabase.example.com"
+    "url": "https://your-supabase.example.com",
+    "edgeContainer": "edge",
+    "dbContainer": "postgres"
   }
 }
 ```
 
-Find your `remotePath` by running on your server:
+### Finding Configuration Values
 
+**remotePath** - SSH to your server and run:
 ```bash
 docker inspect $(docker ps -q --filter 'name=edge') | grep -A 5 "Mounts"
 ```
+
+**Container names** - SSH to your server and run `docker ps` to list containers. Coolify names containers using the pattern `<service>-<uuid>` (e.g., `abc123-supabase-edge-functions-1`). The filter does substring matching, so `edge` matches any container with "edge" in its name.
 
 ## Usage
 
@@ -55,6 +60,9 @@ shsu deploy hello-world
 
 # Deploy without restarting edge-runtime
 shsu deploy hello-world --no-restart
+
+# Run database migrations
+shsu migrate
 
 # Stream logs
 shsu logs
@@ -75,6 +83,21 @@ shsu new my-function
 shsu restart
 ```
 
+## Migrations
+
+Place SQL files in `./supabase/migrations/` (or your configured `migrationsPath`). Files are sorted alphabetically and executed in order.
+
+```
+supabase/migrations/
+  001_create_users.sql
+  002_add_email_index.sql
+```
+
+Run with:
+```bash
+shsu migrate
+```
+
 ## Configuration
 
 Config is read from `package.json` "shsu" key. Environment variables override package.json values.
@@ -85,6 +108,9 @@ Config is read from `package.json` "shsu" key. Environment variables override pa
 | `remotePath` / `SHSU_REMOTE_PATH` | Yes | Remote path to functions directory |
 | `url` / `SHSU_URL` | For `invoke` | Supabase URL |
 | `localPath` / `SHSU_LOCAL_PATH` | No | Local functions path (default: `./supabase/functions`) |
+| `migrationsPath` / `SHSU_MIGRATIONS_PATH` | No | Local migrations path (default: `./supabase/migrations`) |
+| `edgeContainer` / `SHSU_EDGE_CONTAINER` | No | Edge runtime container filter (default: `edge`) |
+| `dbContainer` / `SHSU_DB_CONTAINER` | No | Database container filter (default: `postgres`) |
 
 ## MCP Server
 
@@ -136,9 +162,10 @@ Add to `.cursor/mcp.json` in your project:
 }
 ```
 
-### Available Tools
+### Available MCP Tools
 
 - `deploy` - Deploy edge functions
+- `migrate` - Run database migrations
 - `list` - List local and remote functions
 - `invoke` - Invoke a function
 - `restart` - Restart edge-runtime
