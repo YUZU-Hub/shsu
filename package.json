@@ -1,6 +1,6 @@
 {
   "name": "shsu",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "CLI for deploying and managing Supabase Edge Functions on self-hosted Supabase (Coolify, Docker Compose). Sync functions via rsync, stream logs, and invoke endpoints.",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
