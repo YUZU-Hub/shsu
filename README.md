@@ -171,6 +171,7 @@ Add to `.cursor/mcp.json` in your project:
 - `restart` - Restart edge-runtime
 - `new` - Create new function from template
 - `config` - Show current configuration
+- `docs` - Get setup documentation
 
 ## Releasing
 

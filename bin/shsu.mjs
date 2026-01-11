@@ -428,6 +428,11 @@ async function cmdMcp() {
       description: 'Run SQL migrations on the database. Syncs migration files via rsync and executes them via psql.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'docs',
+      description: 'Get documentation on how to set up and use shsu for deploying Supabase Edge Functions.',
+      inputSchema: { type: 'object', properties: {} },
+    },
   ];
 
   const serverInfo = {
@@ -586,6 +591,93 @@ async function cmdMcp() {
         }
         output += '\nAll migrations applied.';
         return { content: [{ type: 'text', text: output }] };
+      }
+
+      case 'docs': {
+        return {
+          content: [{
+            type: 'text',
+            text: `# shsu - Self-Hosted Supabase Utilities
+
+Deploy and manage Supabase Edge Functions on Coolify-hosted Supabase.
+
+## Project Setup
+
+1. **Configure shsu** by adding to package.json:
+\`\`\`json
+{
+  "shsu": {
+    "server": "root@your-coolify-server",
+    "remotePath": "/data/coolify/services/YOUR_SERVICE_ID/volumes/functions",
+    "url": "https://your-supabase.example.com",
+    "edgeContainer": "edge",
+    "dbContainer": "postgres"
+  }
+}
+\`\`\`
+
+Or run \`npx shsu init\` for interactive setup.
+
+2. **Find configuration values** by SSH'ing to your server:
+   - Container names: \`docker ps\` (Coolify uses pattern \`<service>-<uuid>\`)
+   - Remote path: \`docker inspect $(docker ps -q --filter 'name=edge') | grep -A 5 "Mounts"\`
+
+## Directory Structure
+
+\`\`\`
+your-project/
+├── package.json          # Contains shsu config
+├── supabase/
+│   ├── functions/        # Edge functions (default localPath)
+│   │   ├── hello-world/
+│   │   │   └── index.ts
+│   │   └── another-func/
+│   │       └── index.ts
+│   └── migrations/       # SQL migrations (default migrationsPath)
+│       ├── 001_create_users.sql
+│       └── 002_add_indexes.sql
+\`\`\`
+
+## Configuration Options
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| server | Yes | - | SSH host (e.g., root@server.com) |
+| remotePath | Yes | - | Remote path to functions directory |
+| url | For invoke | - | Supabase URL |
+| localPath | No | ./supabase/functions | Local functions path |
+| migrationsPath | No | ./supabase/migrations | Local migrations path |
+| edgeContainer | No | edge | Edge runtime container filter |
+| dbContainer | No | postgres | Database container filter |
+
+## Edge Function Template
+
+Use \`new\` tool to create functions. Each function needs an index.ts:
+
+\`\`\`typescript
+Deno.serve(async (req) => {
+  const { name } = await req.json()
+  return new Response(
+    JSON.stringify({ message: \`Hello \${name}!\` }),
+    { headers: { "Content-Type": "application/json" } }
+  )
+})
+\`\`\`
+
+## Workflow
+
+1. Create function: \`new\` tool with function name
+2. Edit the function code in supabase/functions/<name>/index.ts
+3. Deploy: \`deploy\` tool (syncs via rsync, restarts edge-runtime)
+4. Test: \`invoke\` tool with JSON data
+5. Debug: Check logs on the server
+
+## Migrations
+
+Place .sql files in supabase/migrations/. They execute alphabetically.
+Use \`migrate\` tool to run all migrations via psql in the database container.`,
+          }],
+        };
       }
 
       default:
