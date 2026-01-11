@@ -238,13 +238,13 @@ async function cmdMigrate() {
     error(`Database container not found (filter: ${config.dbContainer})`);
   }
 
-  // Run each migration
+  // Run each migration (pipe via stdin since container can't see host filesystem)
   for (const migration of migrations) {
     info(`Running ${migration}...`);
     try {
       await run('ssh', [
         config.server,
-        `docker exec -i ${dbContainer} psql -U postgres -d postgres -f /tmp/shsu-migrations/${migration}`,
+        `cat /tmp/shsu-migrations/${migration} | docker exec -i ${dbContainer} psql -U postgres -d postgres`,
       ]);
       success(`Applied ${migration}`);
     } catch (e) {
@@ -685,10 +685,10 @@ To fix:
   }
 }` }] };
         }
-        // Run migrations
+        // Run migrations (pipe via stdin since container can't see host filesystem)
         for (const migration of migrations) {
           output += `\nRunning ${migration}...\n`;
-          output += captureExec(`ssh ${config.server} "docker exec -i ${dbContainer} psql -U postgres -d postgres -f /tmp/shsu-migrations/${migration}"`) + '\n';
+          output += captureExec(`ssh ${config.server} "cat /tmp/shsu-migrations/${migration} | docker exec -i ${dbContainer} psql -U postgres -d postgres"`) + '\n';
         }
         output += '\nAll migrations applied.';
         return { content: [{ type: 'text', text: output }] };
