@@ -465,7 +465,18 @@ async function cmdMcp() {
     switch (name) {
       case 'deploy': {
         if (!config.server || !config.remotePath) {
-          return { content: [{ type: 'text', text: 'Error: server and remotePath must be configured. Run "shsu init" first.' }] };
+          return { content: [{ type: 'text', text: `Error: server and remotePath must be configured.
+
+To fix, add to package.json:
+{
+  "shsu": {
+    "server": "root@your-server.com",
+    "remotePath": "/data/coolify/services/xxx/volumes/functions"
+  }
+}
+
+Find remotePath by running on your server:
+  docker inspect $(docker ps -q --filter 'name=edge') | grep -A 5 "Mounts"` }] };
         }
         const funcName = args.name;
         const noRestart = args.noRestart || false;
@@ -476,7 +487,9 @@ async function cmdMcp() {
         } else {
           const funcPath = join(config.localPath, funcName);
           if (!existsSync(funcPath)) {
-            return { content: [{ type: 'text', text: `Error: Function not found: ${funcPath}` }] };
+            return { content: [{ type: 'text', text: `Error: Function not found: ${funcPath}
+
+To fix, create the function first using the 'new' tool with name: "${funcName}"` }] };
           }
           output = captureExec(`rsync -avz "${funcPath}/" "${config.server}:${config.remotePath}/${funcName}/"`);
         }
@@ -490,7 +503,18 @@ async function cmdMcp() {
 
       case 'list': {
         if (!config.server || !config.remotePath) {
-          return { content: [{ type: 'text', text: 'Error: server and remotePath must be configured.' }] };
+          return { content: [{ type: 'text', text: `Error: server and remotePath must be configured.
+
+To fix, add to package.json:
+{
+  "shsu": {
+    "server": "root@your-server.com",
+    "remotePath": "/data/coolify/services/xxx/volumes/functions"
+  }
+}
+
+Find remotePath by running on your server:
+  docker inspect $(docker ps -q --filter 'name=edge') | grep -A 5 "Mounts"` }] };
         }
         const remote = captureExec(`ssh ${config.server} "ls -1 ${config.remotePath} 2>/dev/null"`) || '(none)';
         let local = '(none)';
@@ -505,10 +529,19 @@ async function cmdMcp() {
 
       case 'invoke': {
         if (!config.url) {
-          return { content: [{ type: 'text', text: 'Error: url must be configured for invoke.' }] };
+          return { content: [{ type: 'text', text: `Error: url must be configured for invoke.
+
+To fix, add to package.json:
+{
+  "shsu": {
+    "url": "https://your-supabase.example.com"
+  }
+}` }] };
         }
         if (!args.name) {
-          return { content: [{ type: 'text', text: 'Error: function name is required.' }] };
+          return { content: [{ type: 'text', text: `Error: function name is required.
+
+Usage: invoke tool with { "name": "function-name", "data": "{\\"key\\": \\"value\\"}" }` }] };
         }
         const data = args.data || '{}';
         const output = captureExec(`curl -s -X POST "${config.url}/functions/v1/${args.name}" -H "Content-Type: application/json" -d '${data}'`);
@@ -517,7 +550,14 @@ async function cmdMcp() {
 
       case 'restart': {
         if (!config.server) {
-          return { content: [{ type: 'text', text: 'Error: server must be configured.' }] };
+          return { content: [{ type: 'text', text: `Error: server must be configured.
+
+To fix, add to package.json:
+{
+  "shsu": {
+    "server": "root@your-server.com"
+  }
+}` }] };
         }
         const output = captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=${config.edgeContainer}')"`);
         return { content: [{ type: 'text', text: `Restarted edge-runtime\n\n${output}` }] };
@@ -525,11 +565,15 @@ async function cmdMcp() {
 
       case 'new': {
         if (!args.name) {
-          return { content: [{ type: 'text', text: 'Error: function name is required.' }] };
+          return { content: [{ type: 'text', text: `Error: function name is required.
+
+Usage: new tool with { "name": "my-function-name" }` }] };
         }
         const funcPath = join(config.localPath, args.name);
         if (existsSync(funcPath)) {
-          return { content: [{ type: 'text', text: `Error: Function already exists: ${args.name}` }] };
+          return { content: [{ type: 'text', text: `Error: Function already exists: ${args.name}
+
+The function already exists at ${funcPath}. To update it, edit the code and use the 'deploy' tool.` }] };
         }
         mkdirSync(funcPath, { recursive: true });
         writeFileSync(
@@ -565,16 +609,35 @@ async function cmdMcp() {
 
       case 'migrate': {
         if (!config.server) {
-          return { content: [{ type: 'text', text: 'Error: server must be configured.' }] };
+          return { content: [{ type: 'text', text: `Error: server must be configured.
+
+To fix, add to package.json:
+{
+  "shsu": {
+    "server": "root@your-server.com"
+  }
+}` }] };
         }
         if (!existsSync(config.migrationsPath)) {
-          return { content: [{ type: 'text', text: `Error: Migrations folder not found: ${config.migrationsPath}` }] };
+          return { content: [{ type: 'text', text: `Error: Migrations folder not found: ${config.migrationsPath}
+
+To fix, create the migrations directory and add .sql files:
+  mkdir -p ${config.migrationsPath}
+
+Then add migration files like:
+  ${config.migrationsPath}/001_create_tables.sql
+  ${config.migrationsPath}/002_add_indexes.sql` }] };
         }
         const migrations = readdirSync(config.migrationsPath)
           .filter((f) => f.endsWith('.sql'))
           .sort();
         if (migrations.length === 0) {
-          return { content: [{ type: 'text', text: 'No migration files found.' }] };
+          return { content: [{ type: 'text', text: `No migration files found in ${config.migrationsPath}
+
+Add .sql files to the migrations folder, e.g.:
+  ${config.migrationsPath}/001_create_tables.sql
+
+Files are executed alphabetically, so use numeric prefixes for ordering.` }] };
         }
         let output = `Found ${migrations.length} migration(s): ${migrations.join(', ')}\n\n`;
         // Sync migrations
@@ -582,7 +645,17 @@ async function cmdMcp() {
         // Find db container
         const dbContainer = captureExec(`ssh ${config.server} "docker ps -q --filter 'name=${config.dbContainer}'"`);
         if (!dbContainer) {
-          return { content: [{ type: 'text', text: `Error: Database container not found (filter: ${config.dbContainer})` }] };
+          return { content: [{ type: 'text', text: `Error: Database container not found (filter: ${config.dbContainer})
+
+To fix:
+1. SSH to your server and run: docker ps
+2. Find the postgres container name (e.g., abc123-supabase-db-1)
+3. Update dbContainer in package.json to match a unique part of the name:
+{
+  "shsu": {
+    "dbContainer": "supabase-db"
+  }
+}` }] };
         }
         // Run migrations
         for (const migration of migrations) {
