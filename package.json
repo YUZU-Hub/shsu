@@ -1,0 +1,34 @@
+{
+  "name": "shsu",
+  "version": "0.0.1",
+  "description": "CLI for deploying and managing Supabase Edge Functions on self-hosted Supabase (Coolify, Docker Compose). Sync functions via rsync, stream logs, and invoke endpoints.",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "bin": {
+    "shsu": "./bin/shsu.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YUZU-Hub/shsu.git"
+  },
+  "keywords": [
+    "supabase",
+    "edge-functions",
+    "deno",
+    "coolify",
+    "self-hosted",
+    "deploy",
+    "cli",
+    "serverless",
+    "docker",
+    "rsync"
+  ],
+  "author": "Stefan Lange-Hegermann <stefan@yuzuhub.com>",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/YUZU-Hub/shsu/issues"
+  },
+  "homepage": "https://github.com/YUZU-Hub/shsu#readme"
+}
