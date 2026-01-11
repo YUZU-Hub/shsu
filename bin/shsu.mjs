@@ -471,12 +471,16 @@ To fix, add to package.json:
 {
   "shsu": {
     "server": "root@your-server.com",
-    "remotePath": "/data/coolify/services/xxx/volumes/functions"
+    "remotePath": "/data/coolify/services/xxx/volumes/functions",
+    "url": "https://your-supabase.example.com",
+    "edgeContainer": "edge",
+    "dbContainer": "postgres"
   }
 }
 
-Find remotePath by running on your server:
-  docker inspect $(docker ps -q --filter 'name=edge') | grep -A 5 "Mounts"` }] };
+To find the values, SSH to your server and run:
+  docker ps                    # Find container names (e.g., xxx-supabase-edge-1)
+  docker inspect <container>   # Find volume paths in "Mounts" section` }] };
         }
         const funcName = args.name;
         const noRestart = args.noRestart || false;
@@ -509,12 +513,16 @@ To fix, add to package.json:
 {
   "shsu": {
     "server": "root@your-server.com",
-    "remotePath": "/data/coolify/services/xxx/volumes/functions"
+    "remotePath": "/data/coolify/services/xxx/volumes/functions",
+    "url": "https://your-supabase.example.com",
+    "edgeContainer": "edge",
+    "dbContainer": "postgres"
   }
 }
 
-Find remotePath by running on your server:
-  docker inspect $(docker ps -q --filter 'name=edge') | grep -A 5 "Mounts"` }] };
+To find the values, SSH to your server and run:
+  docker ps                    # Find container names (e.g., xxx-supabase-edge-1)
+  docker inspect <container>   # Find volume paths in "Mounts" section` }] };
         }
         const remote = captureExec(`ssh ${config.server} "ls -1 ${config.remotePath} 2>/dev/null"`) || '(none)';
         let local = '(none)';
@@ -534,7 +542,11 @@ Find remotePath by running on your server:
 To fix, add to package.json:
 {
   "shsu": {
-    "url": "https://your-supabase.example.com"
+    "server": "root@your-server.com",
+    "remotePath": "/data/coolify/services/xxx/volumes/functions",
+    "url": "https://your-supabase.example.com",
+    "edgeContainer": "edge",
+    "dbContainer": "postgres"
   }
 }` }] };
         }
@@ -555,9 +567,17 @@ Usage: invoke tool with { "name": "function-name", "data": "{\\"key\\": \\"value
 To fix, add to package.json:
 {
   "shsu": {
-    "server": "root@your-server.com"
+    "server": "root@your-server.com",
+    "remotePath": "/data/coolify/services/xxx/volumes/functions",
+    "url": "https://your-supabase.example.com",
+    "edgeContainer": "edge",
+    "dbContainer": "postgres"
   }
-}` }] };
+}
+
+To find the values, SSH to your server and run:
+  docker ps                    # Find container names (e.g., xxx-supabase-edge-1)
+  docker inspect <container>   # Find volume paths in "Mounts" section` }] };
         }
         const output = captureExec(`ssh ${config.server} "docker restart \\$(docker ps -q --filter 'name=${config.edgeContainer}')"`);
         return { content: [{ type: 'text', text: `Restarted edge-runtime\n\n${output}` }] };
@@ -614,9 +634,17 @@ The function already exists at ${funcPath}. To update it, edit the code and use 
 To fix, add to package.json:
 {
   "shsu": {
-    "server": "root@your-server.com"
+    "server": "root@your-server.com",
+    "remotePath": "/data/coolify/services/xxx/volumes/functions",
+    "url": "https://your-supabase.example.com",
+    "edgeContainer": "edge",
+    "dbContainer": "postgres"
   }
-}` }] };
+}
+
+To find the values, SSH to your server and run:
+  docker ps                    # Find container names (e.g., xxx-supabase-edge-1)
+  docker inspect <container>   # Find volume paths in "Mounts" section` }] };
         }
         if (!existsSync(config.migrationsPath)) {
           return { content: [{ type: 'text', text: `Error: Migrations folder not found: ${config.migrationsPath}
