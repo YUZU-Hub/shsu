@@ -145,6 +145,15 @@ Add to `.cursor/mcp.json` in your project:
 - `new` - Create new function from template
 - `config` - Show current configuration
 
+## Releasing
+
+```bash
+npm version patch   # or minor/major
+git push --follow-tags
+```
+
+GitHub Actions will automatically publish to npm when the tag is pushed.
+
 ## License
 
 MIT
